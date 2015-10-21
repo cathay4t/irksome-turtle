@@ -6,3 +6,4 @@
 .*
 !.gitignore
 Module.symvers
+tags
