@@ -6,4 +6,5 @@
 .*
 !.gitignore
 Module.symvers
+irksome
 tags
