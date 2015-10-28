@@ -27,72 +27,86 @@
 #include <sys/ioctl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
+#include <netinet/in.h>
+#include <sys/select.h>
 
 #define _TUN_NAME "turtle"
+#define _IP_PROTOCOL_ID 253    /* For test only, RFC3692 */
 
 #define error(format, ...) \
-	fprintf(stderr, "ERROR(%s:%d): " format, \
-		__FILE__, __LINE__, ##__VA_ARGS__)
+    fprintf(stderr, "ERROR(%s:%d): " format, \
+        __FILE__, __LINE__, ##__VA_ARGS__)
 
 #define info(format, ...) \
-	fprintf(stdout, "INFO(%s:%d): " format, \
-		__FILE__, __LINE__, ##__VA_ARGS__)
+    fprintf(stdout, "INFO(%s:%d): " format, \
+        __FILE__, __LINE__, ##__VA_ARGS__)
 
-int tun_alloc(const char *dev)
+static int _tun_alloc(const char *dev);
+static int _open_ip_raw_socket(int protocol);
+
+static int _tun_alloc(const char *dev)
 {
-	struct ifreq ifr;
-	int fd, err;
+    struct ifreq ifr;
+    int fd, err;
 
 
-	if (dev == NULL) {
-		error("Got NULL tun name");
-		return -1;
-	}
+    if (dev == NULL) {
+        error("Got NULL tun name");
+        return -1;
+    }
 
 
-	fd = open("/dev/net/tun", O_RDWR);
+    fd = open("/dev/net/tun", O_RDWR);
 
-	if (fd < 0) {
-		error("Failed to open /dev/net/tun");
-		return -1;
-	}
+    if (fd < 0) {
+        error("Failed to open /dev/net/tun");
+        return -1;
+    }
 
-	memset(&ifr, 0, sizeof(ifr));
+    memset(&ifr, 0, sizeof(ifr));
 
-	ifr.ifr_flags = IFF_TUN;
-	if (*dev)
-		strncpy(ifr.ifr_name, dev, IFNAMSIZ);
+    ifr.ifr_flags = IFF_TUN;
+    if (*dev)
+        strncpy(ifr.ifr_name, dev, IFNAMSIZ);
 
-	if ((err = ioctl(fd, TUNSETIFF, (void *)&ifr)) < 0) {
-		error("Failed to create tun %s, error %d\n", dev, err);
-		close(fd);
-		return err;
-	}
-	return fd;
+    if ((err = ioctl(fd, TUNSETIFF, (void *)&ifr)) < 0) {
+        error("Failed to create tun %s, error %d\n", dev, err);
+        close(fd);
+        return err;
+    }
+    return fd;
+}
+
+static int _open_ip_raw_socket(int protocol)
+{
+    int raw_socket = socket(AF_INET, SOCK_RAW, int protocol);
+    return raw_socket;
 }
 
 int main(int argc, char **argv)
 {
-	int rc = 0;
-	int tun_fd = -1;
-	system("modprobe -q tun");
-	ssize_t nread;
+    int rc = 0;
+    int tun_fd = -1;
+    int raw_ip_fd = -1;
+    system("modprobe -q tun");
+    ssize_t nread;
 
-	if ((tun_fd = tun_alloc(_TUN_NAME)) < 0) {
-		error("Failed to create tun: %s\n", _TUN_NAME);
-		exit(EXIT_FAILURE);
-	}
-	info("Tun '%s' created\n", _TUN_NAME);
+    tun_fd = _tun_alloc(_TUN_NAME);
+    if (tun_fd < 0) {
+        error("Failed to create tun: %s\n", _TUN_NAME);
+        exit(EXIT_FAILURE);
+    }
+    info("Tun '%s' created\n", _TUN_NAME);
 
+    raw_ip_fd = _open_ip_raw_socket(_IP_PROTOCOL_ID);
 
-
-	while(1) {
-		nread = read(tun_fd, buffer, sizeof(buffer));
-	}
+    while(1) {
+        nread = read(tun_fd, buffer, sizeof(buffer));
+    }
 
 out:
-	if (fd >= 0)
-		close(fd);
+    if (fd >= 0)
+        close(fd);
 
-	exit(EXIT_SUCCESS);
+    exit(EXIT_SUCCESS);
 }
