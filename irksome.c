@@ -99,9 +99,6 @@ static void _parse_arg(int argc, char *argv[])
     snprintf(_SRC_IP, sizeof(_SRC_IP)/sizeof(_SRC_IP[0]), "%s", src);
     snprintf(_DST_IP, sizeof(_DST_IP)/sizeof(_DST_IP[0]), "%s", dst);
 
-    printf("src: %s\n", src);
-    printf("dst: %s\n", dst);
-
     return;
 }
 
@@ -281,6 +278,7 @@ int main(int argc, char **argv)
     fds[1].events = POLLIN;
 
     _setup_ip_header(&ip_header);
+    memset(&dst, 0, sizeof(struct sockaddr_in));
     dst.sin_addr.s_addr = ip_header.ip_dst.s_addr;
     dst.sin_family = AF_INET;
 
@@ -290,7 +288,6 @@ int main(int argc, char **argv)
             if (fds[0].revents & POLLIN) {
                 /* TUN got data, enrypt to ip raw socket */
                 readed_size = read(tun_fd, buff, sizeof(buff));
-                printf("reading %d bytes from %s\n", readed_size, _TUN_NAME);
                 if (readed_size < 0) {
                     printf("Failed to write ip raw socket, errno: %d, %s\n",
                            errno, strerror(errno));
@@ -313,12 +310,10 @@ int main(int argc, char **argv)
                            errno, strerror(errno));
                     continue;
                 }
-                printf("writing %d bytes to ip socket\n", written_size);
             }
             else if (fds[1].revents & POLLIN) {
                 /* Raw IP socket got data, decrypt to tun socket*/
                 readed_size = read(raw_ip_fd, buff, sizeof(buff));
-                printf("reading %d bytes from raw socket\n", readed_size);
                 if (readed_size < 0) {
                     printf("Failed to write ip raw socket, errno: %d, %s\n",
                            errno, strerror(errno));
@@ -344,7 +339,6 @@ int main(int argc, char **argv)
                            errno, strerror(errno));
                     continue;
                 }
-                printf("writing %d bytes to ip socket\n", written_size);
             }
         }
     }
