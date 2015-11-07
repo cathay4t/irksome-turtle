@@ -38,13 +38,18 @@
 #include <netinet/ip.h>
 #include <errno.h>
 #include <arpa/inet.h>
+#include <unistd.h>
+
+#include "encrypt.h"
 
 #define _IP4_HDRLEN 20
 
 #define _TUN_NAME "turtle"
 #define _IP_PROTOCOL_ID 253    /* For test only, RFC3692 */
-#define _DST_IP "192.241.228.123"
-#define _SRC_IP "172.17.2.250"
+
+static char _SRC_IP[16];
+static char _DST_IP[16];
+#define _KEY "ABC"
 
 #define error(format, ...) \
     fprintf(stderr, "ERROR(%s:%d): " format, \
@@ -57,12 +62,53 @@
 static int _tun_alloc(const char *dev);
 static int _setup_ip_raw_socket(int protocol);
 static int _setup_ip_header(struct ip *ip_header);
-uint16_t _checksum(uint16_t *addr, int len);
+static uint16_t _checksum(uint16_t *addr, int len);
+static void _parse_arg(int argc, char *argv[]);
+static void _help(void);
+
+static void _help(void)
+{
+    printf("Invalid argument\n");
+    exit(1);
+}
+
+static void _parse_arg(int argc, char *argv[])
+{
+    char *src = NULL;
+    char *dst = NULL;
+    int index;
+    int c;
+
+    opterr = 0;
+
+    while ((c = getopt (argc, argv, "s:d:")) != -1)
+        switch (c)
+        {
+        case 's':
+            src = optarg;
+            break;
+        case 'd':
+            dst = optarg;
+            break;
+        default:
+            _help();
+        }
+    if ((src == NULL) || (dst == NULL))
+        _help();
+
+    snprintf(_SRC_IP, sizeof(_SRC_IP)/sizeof(_SRC_IP[0]), "%s", src);
+    snprintf(_DST_IP, sizeof(_DST_IP)/sizeof(_DST_IP[0]), "%s", dst);
+
+    printf("src: %s\n", src);
+    printf("dst: %s\n", dst);
+
+    return;
+}
 
 /*
  * RFC 1071
  */
-uint16_t _checksum(uint16_t *addr, int len)
+static uint16_t _checksum(uint16_t *addr, int len)
 {
     int count = len;
     register uint32_t sum = 0;
@@ -148,7 +194,7 @@ static int _setup_ip_header(struct ip *ip_header)
     int ip_flags[4];
 
     // IPv4 header length (4 bits): Number of 32-bit words in header = 5
-    ip_header->ip_hl = _IP4_HDRLEN / sizeof(uint32_t);
+    ip_header->ip_hl = sizeof(struct ip)/ sizeof(uint32_t);
 
     // Internet Protocol version (4 bits): IPv4
     ip_header->ip_v = 4;
@@ -157,7 +203,7 @@ static int _setup_ip_header(struct ip *ip_header)
     ip_header->ip_tos = 0;
 
     // Total length of datagram (16 bits): IP header + next header
-    ip_header->ip_len = htons(_IP4_HDRLEN + _IP4_HDRLEN);
+    ip_header->ip_len = htons(sizeof(struct ip));
 
     // ID sequence number (16 bits): unused, since single datagram
     ip_header->ip_id = htons(0);
@@ -199,7 +245,7 @@ static int _setup_ip_header(struct ip *ip_header)
 
     // IPv4 header checksum (16 bits): set to 0 when calculating checksum
     ip_header->ip_sum = 0;
-    ip_header->ip_sum = _checksum((uint16_t *) &ip_header, _IP4_HDRLEN);
+    ip_header->ip_sum = _checksum((uint16_t *) &ip_header, sizeof(struct ip));
     return 0;
 }
 
@@ -213,11 +259,12 @@ int main(int argc, char **argv)
     struct pollfd fds[2];
     int ret = 0;
     int i = 0;
-    unsigned char buff[IP_MAXPACKET - _IP4_HDRLEN];
+    unsigned char buff[IP_MAXPACKET - sizeof(struct ip)];
     struct ip ip_header;
-    unsigned char real_ip_pkg[IP_MAXPACKET];
+    unsigned char wire_ip_pkg[IP_MAXPACKET];
+    struct sockaddr_in dst;
 
-//    system("modprobe -q tun");
+    _parse_arg(argc, argv);
 
     tun_fd = _tun_alloc(_TUN_NAME);
     if (tun_fd < 0) {
@@ -234,11 +281,14 @@ int main(int argc, char **argv)
     fds[1].events = POLLIN;
 
     _setup_ip_header(&ip_header);
+    dst.sin_addr.s_addr = ip_header.ip_dst.s_addr;
+    dst.sin_family = AF_INET;
 
     while(1) {
         ret = poll(fds, 2, 500 /* timeout in ms */);
         if (ret > 0) {
             if (fds[0].revents & POLLIN) {
+                /* TUN got data, enrypt to ip raw socket */
                 readed_size = read(tun_fd, buff, sizeof(buff));
                 printf("reading %d bytes from %s\n", readed_size, _TUN_NAME);
                 if (readed_size < 0) {
@@ -246,12 +296,49 @@ int main(int argc, char **argv)
                            errno, strerror(errno));
                     continue;
                 }
-                memset(real_ip_pkg, 0, sizeof(IP_MAXPACKET));
-                memcpy(real_ip_pkg, &ip_header,
-                       _IP4_HDRLEN * sizeof (uint8_t));
-                memcpy((real_ip_pkg + _IP4_HDRLEN), buff, readed_size);
-                written_size = write(raw_ip_fd, real_ip_pkg, readed_size +
-                                     _IP4_HDRLEN);
+                if (encrypt_data(buff, readed_size, _KEY, sizeof(_KEY)) != 0) {
+                    printf("encrypt failed\n");
+                    continue;
+                }
+                memset(wire_ip_pkg, 0, sizeof(IP_MAXPACKET));
+                memcpy(wire_ip_pkg, &ip_header, sizeof(struct ip));
+                memcpy((wire_ip_pkg + sizeof(struct ip)), buff, readed_size);
+                written_size = sendto(raw_ip_fd, wire_ip_pkg, readed_size +
+                                      sizeof(struct ip), 0 /* flag */,
+                                      (struct sockaddr *) &dst,
+                                      sizeof(struct sockaddr));
+
+                if (written_size < 0) {
+                    printf("Failed to write ip raw socket, errno: %d, %s\n",
+                           errno, strerror(errno));
+                    continue;
+                }
+                printf("writing %d bytes to ip socket\n", written_size);
+            }
+            else if (fds[1].revents & POLLIN) {
+                /* Raw IP socket got data, decrypt to tun socket*/
+                readed_size = read(raw_ip_fd, buff, sizeof(buff));
+                printf("reading %d bytes from raw socket\n", readed_size);
+                if (readed_size < 0) {
+                    printf("Failed to write ip raw socket, errno: %d, %s\n",
+                           errno, strerror(errno));
+                    continue;
+                }
+                if (readed_size < sizeof(struct ip)) {
+                    printf("discarding package as it is smaller than ip "
+                           "header\n");
+                    continue;
+                }
+                if (decrypt_data(buff, readed_size, _KEY, sizeof(_KEY)) != 0) {
+                    printf("decrypt failed\n");
+                    continue;
+                }
+                memset(wire_ip_pkg, 0, sizeof(IP_MAXPACKET));
+                memcpy(wire_ip_pkg, buff + sizeof(struct ip),
+                       readed_size - sizeof(struct ip));
+                written_size = write(tun_fd, buff + sizeof(struct ip),
+                                     readed_size - sizeof(struct ip));
+
                 if (written_size < 0) {
                     printf("Failed to write ip raw socket, errno: %d, %s\n",
                            errno, strerror(errno));

@@ -1,7 +1,7 @@
 CC=gcc
 EXEC_NAME=irksome
 
-objects = irksome.o
+objects = irksome.o encrypt.o
 
 irksome : $(objects)
 	$(CC) -o $(EXEC_NAME) $(objects)
