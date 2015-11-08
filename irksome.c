@@ -307,7 +307,9 @@ int main(int argc, char **argv)
                            "header\n");
                     continue;
                 }
-                if (decrypt_data(buff, readed_size, _KEY, sizeof(_KEY)) != 0) {
+                if (decrypt_data(buff + sizeof(struct ip),
+                                 readed_size - sizeof(struct ip),
+                                 _KEY, sizeof(_KEY)) != 0) {
                     printf("decrypt failed\n");
                     continue;
                 }
