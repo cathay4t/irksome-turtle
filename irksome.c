@@ -188,8 +188,6 @@ static int _setup_ip_raw_socket(int protocol)
 
 static int _setup_ip_header(struct ip *ip_header)
 {
-    int ip_flags[4];
-
     // IPv4 header length (4 bits): Number of 32-bit words in header = 5
     ip_header->ip_hl = sizeof(struct ip)/ sizeof(uint32_t);
 
@@ -205,25 +203,10 @@ static int _setup_ip_header(struct ip *ip_header)
     // ID sequence number (16 bits): unused, since single datagram
     ip_header->ip_id = htons(0);
 
-    // Flags, and Fragmentation offset (3, 13 bits): 0 since single datagram
-
-    // Zero (1 bit)
-    ip_flags[0] = 0;
-
-    // Do not fragment flag (1 bit)
-    ip_flags[1] = 0;
-
-    // More fragments following flag (1 bit)
-    ip_flags[2] = 0;
-
-    // Fragmentation offset (13 bits)
-    ip_flags[3] = 0;
-
     // Time-to-Live (8 bits): default to maximum value
     ip_header->ip_ttl = 255;
 
-    ip_header->ip_off = htons((ip_flags[0] << 15) + (ip_flags[1] << 14) +
-                              (ip_flags[2] << 13) +  ip_flags[3]);
+    ip_header->ip_off = htons(IP_DF);
 
     // Transport layer protocol (8 bits): 6 for TCP
     ip_header->ip_p = _IP_PROTOCOL_ID;
